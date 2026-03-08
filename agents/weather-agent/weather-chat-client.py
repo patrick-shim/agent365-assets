@@ -137,7 +137,7 @@ async def _chat(agent: Agent, message: str) -> str:
     return getattr(result, "text", None) or str(result)
 
 
-async def main() -> None:
+async def _run_client() -> None:
     agent = _build_agent()
     print("[client] Agent ready. Type 'exit' to quit.\n")
 
@@ -166,4 +166,4 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(_run_client())
