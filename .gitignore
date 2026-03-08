@@ -11,6 +11,7 @@ build/
 .env
 .local.env
 agents/**/a365.generated.config.json
+agents/**/a365.config.json
 tools/application.json
 
 # a365 CLI build artifacts

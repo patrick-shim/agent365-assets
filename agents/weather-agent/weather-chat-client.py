@@ -26,6 +26,7 @@ from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
 from pydantic import Field
+from purview_dlp import build_security_middleware
 
 
 # ---------------------------------------------------------------------------
@@ -123,6 +124,7 @@ def _build_agent() -> Agent:
             "Be concise."
         ),
         tools=[get_weather],
+        middleware=build_security_middleware(),
     )
 
 
