@@ -79,6 +79,7 @@ from microsoft_agents.hosting.core import (
 # Pydantic Field: used to attach human-readable descriptions to tool parameters.
 # The LLM reads these descriptions to understand what each argument means.
 from pydantic import Field
+from purview_dlp import build_security_middleware, scan_output
 
 # ---------------------------------------------------------------------------
 # Load environment variables from .env BEFORE any Azure SDK calls, because
@@ -547,6 +548,7 @@ _ai_agent = Agent(
         "Be concise."
     ),
     tools=[get_weather],  # Only one tool registered; extend this list to add capabilities
+    middleware=build_security_middleware(),  # Purview DLP (no-op if not configured)
 )
 
 
@@ -631,6 +633,12 @@ async def on_message(context: TurnContext, _: TurnState) -> None:
     text = getattr(result, "text", None)
     if text is None:
         text = str(result)
+
+    # POST-LLM output scan (Defender AI gate — mirrors pre-LLM Prompt Shields)
+    output_block = scan_output(text)
+    if output_block:
+        await context.send_activity(output_block)
+        return
 
     # Send the final response back to the Teams / M365 channel
     await context.send_activity(text)
