@@ -1,14 +1,15 @@
-# python app to register an application with deleted permissions 
-# 1. Propmt the user for application name
+# python app to register an application with required permissions
+# 1. Prompt the user for application name
 # 2. Registers an app to Microsoft Entra
-# 3. Assign DELEGATED PERMISSION to the APP (NOT Application)
+# 3. Assign DELEGATED PERMISSIONS to the APP:
 #  - Application.ReadWrite.All
 #  - AgentIdentityBlueprint.ReadWrite.All
 #  - AgentIdentityBlueprint.UpdateAuthProperties.All
 #  - DelegatedPermissionGrant.ReadWrite.All
 #  - Directory.Read.All
-# 4. Saves the result data such as Application ID into application.json
-
+# 4. Assign APPLICATION PERMISSIONS to the APP:
+#  - InformationProtectionPolicy.Read.All
+# 5. Saves the result data such as Application ID into application.json
 
 import argparse
 import json
@@ -213,7 +214,7 @@ def _get_graph_service_principal(session: requests.Session) -> Dict[str, Any]:
         f"{GRAPH_BASE_URL}/servicePrincipals",
         params={
             "$filter": f"appId eq '{GRAPH_RESOURCE_APP_ID}'",
-            "$select": "id,appId,displayName,oauth2PermissionScopes",
+            "$select": "id,appId,displayName,oauth2PermissionScopes,appRoles",
             "$top": 1,
         },
         expected=(200,),
@@ -251,17 +252,47 @@ def _resolve_scope_ids(graph_sp: Dict[str, Any], scope_values: Iterable[str]) ->
     return resolved
 
 
-def _set_delegated_permissions(
+def _resolve_role_ids(graph_sp: Dict[str, Any], role_values: Iterable[str]) -> Dict[str, str]:
+    roles = graph_sp.get("appRoles") or []
+    by_value: Dict[str, str] = {}
+    for r in roles:
+        val = r.get("value")
+        rid = r.get("id")
+        if val and rid:
+            by_value[val] = rid
+
+    missing: List[str] = []
+    resolved: Dict[str, str] = {}
+    for v in role_values:
+        rid = by_value.get(v)
+        if not rid:
+            missing.append(v)
+        else:
+            resolved[v] = rid
+
+    if missing:
+        raise RuntimeError(
+            "Unable to resolve application permission role IDs for: "
+            + ", ".join(missing)
+            + ". Ensure these app roles exist in Microsoft Graph for this tenant."
+        )
+    return resolved
+
+
+def _set_required_permissions(
     session: requests.Session,
     application_object_id: str,
     delegated_scope_ids: Dict[str, str],
+    application_role_ids: Dict[str, str],
 ) -> None:
+    resource_access = (
+        [{"id": sid, "type": "Scope"} for _, sid in sorted(delegated_scope_ids.items())]
+        + [{"id": rid, "type": "Role"} for _, rid in sorted(application_role_ids.items())]
+    )
     required_resource_access = [
         {
             "resourceAppId": GRAPH_RESOURCE_APP_ID,
-            "resourceAccess": [
-                {"id": sid, "type": "Scope"} for _, sid in sorted(delegated_scope_ids.items())
-            ],
+            "resourceAccess": resource_access,
         }
     ]
 
@@ -296,6 +327,29 @@ def _grant_admin_consent(
     return resp.json()
 
 
+def _grant_app_role_assignments(
+    session: requests.Session,
+    client_service_principal_id: str,
+    resource_service_principal_id: str,
+    role_ids: Dict[str, str],
+) -> List[Dict[str, Any]]:
+    results: List[Dict[str, Any]] = []
+    for role_value, role_id in sorted(role_ids.items()):
+        resp = _graph_request(
+            session,
+            "POST",
+            f"{GRAPH_BASE_URL}/servicePrincipals/{client_service_principal_id}/appRoleAssignments",
+            json_body={
+                "principalId": client_service_principal_id,
+                "resourceId": resource_service_principal_id,
+                "appRoleId": role_id,
+            },
+            expected=(201,),
+        )
+        results.append(resp.json())
+    return results
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(add_help=True)
     parser.add_argument("--tenant-id", default=os.environ.get("AZURE_TENANT_ID") or "organizations")
@@ -327,6 +381,10 @@ def main() -> int:
         "AgentIdentityBlueprint.UpdateAuthProperties.All",
         "DelegatedPermissionGrant.ReadWrite.All",
         "Directory.Read.All",
+    ]
+
+    application_permissions = [
+        "InformationProtectionPolicy.Read.All",
     ]
 
     if args.auth == "token":
@@ -375,16 +433,24 @@ def main() -> int:
     app_sp = _ensure_service_principal(session, app_id)
     graph_sp = _get_graph_service_principal(session)
     scope_ids = _resolve_scope_ids(graph_sp, delegated_permissions)
+    role_ids = _resolve_role_ids(graph_sp, application_permissions)
 
-    _set_delegated_permissions(session, app_object_id, scope_ids)
+    _set_required_permissions(session, app_object_id, scope_ids, role_ids)
 
     grant: Optional[Dict[str, Any]] = None
+    app_role_grants: List[Dict[str, Any]] = []
     if args.admin_consent:
         grant = _grant_admin_consent(
             session,
             client_service_principal_id=app_sp["id"],
             resource_service_principal_id=graph_sp["id"],
             scope_values=delegated_permissions,
+        )
+        app_role_grants = _grant_app_role_assignments(
+            session,
+            client_service_principal_id=app_sp["id"],
+            resource_service_principal_id=graph_sp["id"],
+            role_ids=role_ids,
         )
 
     result = {
@@ -395,7 +461,10 @@ def main() -> int:
         "servicePrincipalId": app_sp.get("id"),
         "requiredDelegatedPermissions": delegated_permissions,
         "requiredDelegatedPermissionScopeIds": scope_ids,
+        "requiredApplicationPermissions": application_permissions,
+        "requiredApplicationPermissionRoleIds": role_ids,
         "adminConsentGrant": grant,
+        "appRoleAssignments": app_role_grants,
     }
 
     with open(args.output, "w", encoding="utf-8") as f:
