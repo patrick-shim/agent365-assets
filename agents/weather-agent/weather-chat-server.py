@@ -1,5 +1,5 @@
 """
-agent_weather.py
+weather-chat-server.py (2916bddb-7241-4140-a59e-b945e24e7728)
 ================
 A Microsoft 365 Agent (Bot Framework) that answers weather questions using
 Azure OpenAI (GPT-4o / o-series) as its "brain" and the open-meteo.com APIs
