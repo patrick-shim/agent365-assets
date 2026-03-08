@@ -20,11 +20,23 @@ Requires env var: PURVIEW_CLIENT_APP_ID  (leave blank to disable)
 """
 
 import json
+import logging
 import os
 from typing import Any, List
 
 from azure.identity import ClientSecretCredential, DefaultAzureCredential
 from agent_framework.microsoft import PurviewPolicyMiddleware, PurviewSettings
+
+# Route the Purview SDK's own logger to stdout with [PURVIEW_SDK] prefix.
+# This surfaces debug, info, warning, and error messages from the SDK itself,
+# including auth failures, pre-check/post-check errors, and block decisions.
+_sdk_logger = logging.getLogger("agent_framework.purview")
+if not _sdk_logger.handlers:
+    _sdk_handler = logging.StreamHandler()
+    _sdk_handler.setFormatter(logging.Formatter("[PURVIEW_SDK] %(levelname)s: %(message)s"))
+    _sdk_logger.addHandler(_sdk_handler)
+    _sdk_logger.setLevel(logging.DEBUG)
+    _sdk_logger.propagate = False
 
 
 def _build_purview_credential():
@@ -88,6 +100,15 @@ def build_security_middleware() -> List[Any]:
             credential=_build_purview_credential(),
             settings=PurviewSettings(
                 app_name=app_name,
+                blocked_prompt_message=(
+                    "[PURVIEW BLOCKED] Your message contains sensitive information "
+                    "that is restricted by your organisation's data loss prevention policy. "
+                    "Please remove the sensitive content and try again."
+                ),
+                blocked_response_message=(
+                    "[PURVIEW BLOCKED] The response contained sensitive information "
+                    "that was redacted by your organisation's data loss prevention policy."
+                ),
                 # Log Purview errors but don't fail requests — allows local testing
                 # while Graph API permissions (InformationProtectionPolicy.Read.All)
                 # are being configured in Azure AD.
