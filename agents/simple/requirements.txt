@@ -1,0 +1,9 @@
+msal>=1.26.0
+requests>=2.31.0
+agent-framework==1.0.0rc3
+microsoft-agents-a365-observability-core
+microsoft-agents-a365-observability-extensions-agent-framework
+python-dotenv>=1.0.1
+azure-identity>=1.16.0
+microsoft-agents-hosting-aiohttp>=0.8.0
+aiohttp>=3.9.0

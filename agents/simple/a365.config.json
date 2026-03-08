@@ -1,0 +1,20 @@
+{
+  "tenantId": "0fe87165-87de-443f-b6d6-6471bae991ea",
+  "subscriptionId": "8a325609-e31a-47db-bbb2-e8af4c9f04b2",
+  "resourceGroup": "rg-agent-demos",
+  "location": "eastus",
+  "environment": "prod",
+  "needDeployment": true,
+  "clientAppId": "2916bddb-7241-4140-a59e-b945e24e7728",
+  "appServicePlanName": "weatheragent365",
+  "appServicePlanSku": "B1",
+  "webAppName": "weatheragent365-webapp",
+  "agentIdentityDisplayName": "weatheragent365 Identity",
+  "agentBlueprintDisplayName": "weatheragent365 Blueprint",
+  "agentUserPrincipalName": "weatheragent365@SCIPCP05985001.onmicrosoft.com",
+  "agentUserDisplayName": "weatheragent365 Agent User",
+  "managerEmail": "admin@SCIPCP05985001.onmicrosoft.com",
+  "agentUserUsageLocation": "US",
+  "deploymentProjectPath": "D:\\\uBB38\uC11C\uD3F4\uB354\\Projects\\agent365-assets\\agents\\simple",
+  "agentDescription": "weatheragent365 - Agent 365 Agent"
+}

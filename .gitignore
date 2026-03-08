@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+*.egg-info/
+dist/
+build/
+
+# Environment & secrets
+.env
+agents/**/a365.generated.config.json
+tools/application.json
+
+# a365 CLI build artifacts
+agents/**/publish/
+agents/**/manifest/
+agents/**/app.zip
+
+# Azure
+allow-scm.json
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
