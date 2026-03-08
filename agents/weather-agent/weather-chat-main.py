@@ -34,8 +34,6 @@ Environment variables (put in a .env file next to this file):
 # ---------------------------------------------------------------------------
 import json          # Used for serialising/deserialising JSON (logs, config files)
 import os            # Used to read environment variables (secrets, config)
-from dataclasses import dataclass          # Lightweight class definition without boilerplate
-from datetime import datetime, timezone    # For generating UTC timestamps in log records
 from pathlib import Path                   # Cross-platform file path handling
 from typing import Annotated, Any, Dict, Optional  # Type hints for clarity and IDE support
 from uuid import uuid4                     # Generates universally-unique IDs for correlation
@@ -49,7 +47,7 @@ from aiohttp import web                    # Async HTTP server framework – hos
 # Azure Identity: provides credential objects that authenticate against Azure AD.
 # DefaultAzureCredential tries multiple auth methods in order (env vars, managed identity,
 # Azure CLI, etc.) so the same code works in local dev AND in production on Azure.
-from azure.identity import DefaultAzureCredential, AzureCliCredential
+from azure.identity import DefaultAzureCredential
 
 # Internal agent framework packages (Microsoft / Agent365):
 # - Agent: orchestrates the LLM + tool-calling loop
@@ -79,7 +77,8 @@ from microsoft_agents.hosting.core import (
 # Pydantic Field: used to attach human-readable descriptions to tool parameters.
 # The LLM reads these descriptions to understand what each argument means.
 from pydantic import Field
-from purview_dlp import build_security_middleware, scan_output
+from defender import SecurityContext, shield_prompt, scan_output
+from purview_dlp import build_security_middleware
 
 # ---------------------------------------------------------------------------
 # Load environment variables from .env BEFORE any Azure SDK calls, because
@@ -105,156 +104,6 @@ from microsoft_agents_a365.observability.core.middleware.baggage_builder import 
 from microsoft_agents_a365.observability.extensions.agentframework.trace_instrumentor import (
     AgentFrameworkInstrumentor,
 )
-
-
-# ===========================================================================
-# SECTION 1 – Security / Audit Helpers
-# ===========================================================================
-
-@dataclass
-class SecurityContext:
-    """
-    Carries security metadata for a single logical session.
-
-    This dataclass is intentionally lightweight – it is NOT a per-turn object.
-    A single instance is created at module load time and reused for all turns
-    (see the module-level _sec_ctx variable further below).
-
-    Attributes:
-        tenant_id        – Azure AD tenant that owns this bot deployment.
-        user_id          – Logical identifier for the calling user (for audit logs).
-        correlation_id   – UUID that links all log records for this session together.
-        jailbreak_attempts – Running count of Prompt Shield blocks; useful for
-                             rate-limiting or escalating repeat offenders.
-    """
-    tenant_id: str
-    user_id: str
-    correlation_id: str
-    jailbreak_attempts: int = 0
-
-
-def _utc_now() -> str:
-    """
-    Returns the current UTC time as an ISO-8601 string, e.g. '2025-03-08T12:34:56.789+00:00'.
-    Using timezone-aware datetimes avoids bugs when servers are in different time zones.
-    """
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _log_defender_event(event: str, ctx: SecurityContext, details: dict) -> None:
-    """
-    Emits a structured JSON log record to stdout.
-
-    In production these records are ingested by Azure Monitor / Microsoft Defender
-    for Cloud, where they appear as security events on the portal dashboard.
-
-    Parameters:
-        event   – Short snake_case label, e.g. "prompt_shield_blocked".
-        ctx     – The SecurityContext for the current session (tenant, user, etc.).
-        details – Arbitrary dict with event-specific data (raw API response, error, …).
-
-    The "layer" field ("DEFENDER_AI") lets log-query filters quickly isolate
-    records from this security layer versus, say, the weather tool layer.
-    """
-    record = {
-        "time": _utc_now(),                        # When this event occurred (UTC)
-        "event": event,                             # Human-readable event type
-        "layer": "DEFENDER_AI",                    # Log category tag for filtering
-        "correlation_id": ctx.correlation_id,       # Links all records for this session
-        "tenant_id": ctx.tenant_id,                 # Which Azure tenant owns this agent
-        "user_id": ctx.user_id,                     # Which user triggered the event
-        "jailbreak_attempts": ctx.jailbreak_attempts,  # Cumulative blocked attempts
-        "details": details,                         # Event-specific payload
-    }
-    # Print as a single line of JSON – easy to parse with log aggregators
-    print(f"[DEFENDER_AI] {event}: {json.dumps(record, ensure_ascii=False)}")
-
-
-def _shield_prompt(user_text: str, ctx: SecurityContext) -> Optional[str]:
-    """
-    Calls the Azure AI Content Safety "Prompt Shields" REST API to detect
-    jailbreak and prompt-injection attacks BEFORE the text reaches the LLM.
-
-    Why this matters:
-        Without input scanning, a malicious user could craft a message like
-        "Ignore all previous instructions and…" to hijack the agent's behaviour.
-        Prompt Shields detects such patterns and lets us refuse the request early.
-
-    How it works:
-        1. We exchange the DefaultAzureCredential for a short-lived Bearer token
-           scoped to the Cognitive Services resource.
-        2. We POST the user's raw text to the shieldPrompt endpoint.
-        3. If attackDetected == True we increment the jailbreak counter, log the
-           event, and return a refusal message string.
-        4. If the env var AZURE_CONTENT_SAFETY_ENDPOINT is not set we skip
-           scanning entirely (graceful degradation for local development).
-
-    Parameters:
-        user_text – The raw text the user sent.
-        ctx       – SecurityContext (mutated: jailbreak_attempts incremented on block).
-
-    Returns:
-        A refusal string if an attack was detected, or None if the text is safe
-        (or if scanning was skipped because the endpoint is not configured).
-    """
-    # Read the Content Safety endpoint from the environment.
-    # Stripping trailing slash prevents double-slash URLs.
-    cs_endpoint = os.environ.get("AZURE_CONTENT_SAFETY_ENDPOINT", "").rstrip("/")
-    if not cs_endpoint:
-        # No endpoint configured → skip scanning (ok for local dev / unit tests)
-        return None
-
-    # Full REST URL for the Prompt Shields operation (GA version: 2024-09-01)
-    url = f"{cs_endpoint}/contentsafety/text:shieldPrompt?api-version=2024-09-01"
-    try:
-        # Obtain a short-lived OAuth 2.0 bearer token from Azure AD.
-        # DefaultAzureCredential will use the developer's 'az login' session locally,
-        # or the VM/container's Managed Identity in production – no secrets in code.
-        token = DefaultAzureCredential().get_token(
-            "https://cognitiveservices.azure.com/.default"
-        ).token
-
-        resp = requests.post(
-            url,
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "userPrompt": user_text,  # The text to scan
-                "documents": [],          # Optional list of retrieved documents to scan
-            },
-            timeout=10,  # Fail fast – never block a user turn for more than 10 s
-        )
-        resp.raise_for_status()  # Raises an exception for 4xx / 5xx HTTP status codes
-
-        result = resp.json()
-
-        # The API returns a nested structure; we only need the attackDetected flag
-        attack = result.get("userPromptAnalysis", {}).get("attackDetected", False)
-
-        # Log every scan result for audit trail (attack or not)
-        _log_defender_event("prompt_shield_scanned", ctx, {
-            "attack_detected": attack,
-            "raw": result,  # Full API response preserved for forensic analysis
-        })
-
-        if attack:
-            # Increment the running counter so callers can implement rate limits
-            ctx.jailbreak_attempts += 1
-            _log_defender_event("prompt_shield_blocked", ctx, {
-                "jailbreak_attempts": ctx.jailbreak_attempts,
-            })
-            # Return a safe, generic refusal message to the user
-            return "Request blocked: prompt injection or jailbreak attempt detected."
-
-    except Exception as e:
-        # Scanning errors (network timeout, auth failure, etc.) are logged but NOT
-        # treated as fatal – we prefer to let the message through rather than deny
-        # all users when the safety service is temporarily unavailable.
-        _log_defender_event("prompt_shield_error", ctx, {"error": str(e)})
-
-    return None  # Text is safe (or scanning was skipped due to an error)
 
 
 # ===========================================================================
@@ -603,7 +452,7 @@ async def on_message(context: TurnContext, _: TurnState) -> None:
         return
 
     # ---- Security gate: scan for jailbreak / prompt injection ----
-    shield_block = _shield_prompt(user_text, _sec_ctx)
+    shield_block = shield_prompt(user_text, _sec_ctx)
     if shield_block:
         # The prompt was flagged – send the refusal message and stop processing.
         # We do NOT pass the text to the LLM at all.
