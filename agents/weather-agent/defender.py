@@ -39,6 +39,15 @@ from typing import Optional
 import requests
 from azure.identity import DefaultAzureCredential
 
+# ---------------------------------------------------------------------------
+# Credential singleton — created once, tokens cached between calls.
+# On Azure App Service IDENTITY_ENDPOINT is set → ManagedIdentity is used.
+# Locally it is absent → ManagedIdentity probe is skipped, falling back to
+# AzureCliCredential (requires 'az login'; fast, no IMDS timeout).
+# ---------------------------------------------------------------------------
+_IS_AZURE = bool(os.environ.get("IDENTITY_ENDPOINT") or os.environ.get("MSI_ENDPOINT"))
+_CREDENTIAL = DefaultAzureCredential(exclude_managed_identity_credential=not _IS_AZURE)
+
 
 # ===========================================================================
 # Security context
@@ -93,7 +102,7 @@ def log_security_event(event: str, ctx: SecurityContext, details: dict) -> None:
 
 
 def _get_content_safety_token() -> str:
-    return DefaultAzureCredential().get_token(
+    return _CREDENTIAL.get_token(
         "https://cognitiveservices.azure.com/.default"
     ).token
 

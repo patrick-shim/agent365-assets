@@ -26,6 +26,11 @@ from typing import Any, List
 from azure.identity import DefaultAzureCredential
 from agent_framework.microsoft import PurviewPolicyMiddleware, PurviewSettings
 
+# Credential singleton — skips ManagedIdentity locally (no IDENTITY_ENDPOINT),
+# uses AzureCliCredential instead. On Azure App Service ManagedIdentity is used.
+_IS_AZURE = bool(os.environ.get("IDENTITY_ENDPOINT") or os.environ.get("MSI_ENDPOINT"))
+_CREDENTIAL = DefaultAzureCredential(exclude_managed_identity_credential=not _IS_AZURE)
+
 
 def _log(event: str, details: dict) -> None:
     print(f"[PURVIEW] {event}: {json.dumps(details, ensure_ascii=False)}")
@@ -65,10 +70,14 @@ def build_security_middleware() -> List[Any]:
 
     try:
         purview = PurviewPolicyMiddleware(
-            # DefaultAzureCredential resolves to Managed Identity on Azure App Service
-            # and to 'az login' / env vars in local development — no secrets in code.
-            credential=DefaultAzureCredential(),
-            settings=PurviewSettings(app_name=app_name),
+            credential=_CREDENTIAL,
+            settings=PurviewSettings(
+                app_name=app_name,
+                # Log Purview errors but don't fail requests — allows local testing
+                # while Graph API permissions (InformationProtectionPolicy.Read.All)
+                # are being configured in Azure AD.
+                ignore_exceptions=True,
+            ),
         )
         middleware.append(purview)
         _log("purview_middleware_initialized", {"app_name": app_name})

@@ -9,6 +9,7 @@ build/
 
 # Environment & secrets
 .env
+.local.env
 agents/**/a365.generated.config.json
 tools/application.json
 
