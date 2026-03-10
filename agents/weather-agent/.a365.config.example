@@ -1,0 +1,19 @@
+{
+  "tenantId": "00000000-0000-0000-0000-000000000000",
+  "subscriptionId": "00000000-0000-0000-0000-000000000000",
+  "resourceGroup": "your-resource-group",
+  "location": "eastus",
+  "environment": "prod",
+  "needDeployment": true,
+  "clientAppId": "00000000-0000-0000-0000-000000000000",
+  "appServicePlanName": "your-app-service-plan",
+  "webAppName": "your-webapp-name",
+  "agentIdentityDisplayName": "Your Agent Identity",
+  "agentBlueprintDisplayName": "Your Agent Blueprint",
+  "agentUserPrincipalName": "agent@yourtenant.onmicrosoft.com",
+  "agentUserDisplayName": "Your Agent User",
+  "managerEmail": "admin@yourtenant.onmicrosoft.com",
+  "agentUserUsageLocation": "US",
+  "deploymentProjectPath": ".",
+  "agentDescription": "Describe your Agent 365 app"
+}
