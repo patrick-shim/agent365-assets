@@ -9,6 +9,7 @@ from aiohttp.web import Request, Response, Application, run_app
 
 def start_server(agent_application: AgentApplication,
                  auth_configuration: AgentAuthConfiguration):
+
     async def entry_point(req: Request) -> Response:
         agent: AgentApplication = req.app["agent_app"]
         adapter: CloudAdapter = req.app["adapter"]
@@ -22,6 +23,6 @@ def start_server(agent_application: AgentApplication,
     # stash configuration and agent on the app state
     app["agent_configuration"] = auth_configuration
     app["agent_app"] = agent_application
-    app["adapter"] = agent_application.adapter
+    app["adapter"] = CloudAdapter()
 
     run_app(app, host="localhost", port=int(environ.get("PORT", 3978)))
